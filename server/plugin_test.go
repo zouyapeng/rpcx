@@ -2,12 +2,13 @@ package server
 
 import (
 	"context"
-	"github.com/smallnest/rpcx/client"
-	"github.com/smallnest/rpcx/protocol"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/smallnest/rpcx/v5/client"
+	"github.com/smallnest/rpcx/v5/protocol"
 )
 
 type HeartbeatHandler struct{}
