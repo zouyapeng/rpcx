@@ -10,8 +10,8 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/model"
 	"github.com/nacos-group/nacos-sdk-go/vo"
-	"github.com/smallnest/rpcx/log"
-	"github.com/smallnest/rpcx/util"
+	"github.com/zouyapeng/rpcx/log"
+	"github.com/zouyapeng/rpcx/util"
 )
 
 // NacosDiscovery is a nacos service discovery.

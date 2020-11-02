@@ -8,7 +8,7 @@ import (
 	"github.com/docker/libkv"
 	"github.com/docker/libkv/store"
 	"github.com/docker/libkv/store/zookeeper"
-	"github.com/smallnest/rpcx/log"
+	"github.com/zouyapeng/rpcx/log"
 )
 
 func init() {
@@ -29,7 +29,8 @@ type ZookeeperDiscovery struct {
 
 	filter ServiceDiscoveryFilter
 
-	stopCh chan struct{}
+	stopCh  chan struct{}
+	watchCh <-chan []*store.KVPair
 }
 
 // NewZookeeperDiscovery returns a new ZookeeperDiscovery.
@@ -59,9 +60,15 @@ func NewZookeeperDiscoveryWithStore(basePath string, kv store.Store) ServiceDisc
 	d := &ZookeeperDiscovery{basePath: basePath, kv: kv}
 	d.stopCh = make(chan struct{})
 
-	ps, err := kv.List(basePath)
+	var err error
+	d.watchCh, err = d.kv.WatchTree(d.basePath, d.stopCh)
 	if err != nil {
-		log.Infof("cannot get services of %s from registry: %v, err: %v", basePath, err)
+		log.Errorf("can not watch tree: %s: %v", d.basePath, err)
+		panic("can not watch tree")
+	}
+	ps := <-d.watchCh
+	if ps == nil {
+		log.Errorf("cannot get services of %s from registry: %v, err: %v", basePath, err)
 		panic(err)
 	}
 
@@ -73,8 +80,15 @@ func NewZookeeperDiscoveryWithStore(basePath string, kv store.Store) ServiceDisc
 		}
 		pairs = append(pairs, pair)
 	}
+
+	for _, p := range ps {
+		pair := &KVPair{Key: p.Key, Value: string(p.Value)}
+		if d.filter != nil && !d.filter(pair) {
+			continue
+		}
+		pairs = append(pairs, pair)
+	}
 	d.pairs = pairs
-	d.RetriesAfterWatchFailed = -1
 	go d.watch()
 
 	return d
@@ -146,77 +160,39 @@ func (d *ZookeeperDiscovery) watch() {
 	}()
 
 	for {
-		var err error
-		var c <-chan []*store.KVPair
-		var tempDelay time.Duration
-
-		retry := d.RetriesAfterWatchFailed
-		for d.RetriesAfterWatchFailed < 0 || retry >= 0 {
-			c, err = d.kv.WatchTree(d.basePath, nil)
-			if err != nil {
-				if d.RetriesAfterWatchFailed > 0 {
-					retry--
-				}
-				if tempDelay == 0 {
-					tempDelay = 1 * time.Second
-				} else {
-					tempDelay *= 2
-				}
-				if max := 30 * time.Second; tempDelay > max {
-					tempDelay = max
-				}
-				log.Warnf("can not watchtree (with retry %d, sleep %v): %s: %v", retry, tempDelay, d.basePath, err)
-				time.Sleep(tempDelay)
-				continue
-			}
-			break
-		}
-
-		if err != nil {
-			log.Errorf("can't watch %s: %v", d.basePath, err)
+		select {
+		case <-d.stopCh:
+			log.Info("discovery has been closed")
 			return
-		}
-
-		if err != nil {
-			log.Fatalf("can not watchtree: %s: %v", d.basePath, err)
-		}
-
-	readChanges:
-		for {
-			select {
-			case <-d.stopCh:
-				log.Info("discovery has been closed")
-				return
-			case ps := <-c:
-				if ps == nil {
-					break readChanges
-				}
-				var pairs []*KVPair // latest servers
-				for _, p := range ps {
-					pair := &KVPair{Key: p.Key, Value: string(p.Value)}
-					if d.filter != nil && !d.filter(pair) {
-						continue
-					}
-					pairs = append(pairs, pair)
-				}
-				d.pairs = pairs
-
-				d.mu.Lock()
-				for _, ch := range d.chans {
-					ch := ch
-					go func() {
-						defer func() {
-							recover()
-						}()
-						select {
-						case ch <- pairs:
-						case <-time.After(time.Minute):
-							log.Warn("chan is full and new change has been dropped")
-						}
-					}()
-				}
-				d.mu.Unlock()
+		case ps := <-d.watchCh:
+			if ps == nil {
+				break
 			}
+			var pairs []*KVPair // latest servers
+			for _, p := range ps {
+				pair := &KVPair{Key: p.Key, Value: string(p.Value)}
+				if d.filter != nil && !d.filter(pair) {
+					continue
+				}
+				pairs = append(pairs, pair)
+			}
+			d.pairs = pairs
+
+			d.mu.Lock()
+			for _, ch := range d.chans {
+				ch := ch
+				go func() {
+					defer func() {
+						recover()
+					}()
+					select {
+					case ch <- pairs:
+					case <-time.After(time.Minute):
+						log.Warn("chan is full and new change has been dropped")
+					}
+				}()
+			}
+			d.mu.Unlock()
 		}
 
 		log.Warn("chan is closed and will rewatch")

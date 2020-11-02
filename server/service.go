@@ -11,8 +11,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	rerrors "github.com/smallnest/rpcx/errors"
-	"github.com/smallnest/rpcx/log"
+	rerrors "github.com/zouyapeng/rpcx/errors"
+	"github.com/zouyapeng/rpcx/log"
 )
 
 // Precompute the reflect type for error. Can't use error directly
@@ -106,7 +106,7 @@ func (s *Server) RegisterFunctionName(servicePath string, name string, fn interf
 	if err != nil {
 		return err
 	}
-	
+
 	return s.Plugins.DoRegisterFunction(servicePath, name, fn, metadata)
 }
 
